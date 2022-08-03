@@ -1,14 +1,23 @@
 from __future__ import annotations
 
+import logging
 import socket
 from threading import Thread
-from typing import Optional
+from typing import TYPE_CHECKING, Optional
 
+import utils.logger
 from client import Client
+
+if TYPE_CHECKING:
+    from typing_extensions import Self
+
+__log__ = logging.getLogger(__name__)
 
 
 class Server:
     """Socket Server class"""
+
+    ip: str = socket.gethostbyname(socket.gethostname()) # 127.0.0.1
 
     clients: list[Client] = []
     _thread: Optional[Thread] = None
@@ -16,13 +25,17 @@ class Server:
     def __init__(self, port: int, buffer: int = 1024) -> None:
         self.port = port
         self.buffer = buffer
-
-        self.ip: str = socket.gethostbyname(socket.gethostname())
-        # self.ip: str = "127.0.0.1"
+        
         self._runing: bool = False
 
     def __repr__(self) -> str:
         return f"<SocketServer-{self.ip}:{self.port}>"
+
+    def __eq__(self, other: object) -> bool:
+        return isinstance(other, Server) and self.socket == other.socket
+
+    def __ne__(self, other: object) -> bool:
+        return not self.__eq__(other)
 
     @property
     def address(self) -> tuple[str, int]:
@@ -60,9 +73,11 @@ class Server:
     def streaming(self, buffer: bytes, sender: Client) -> None:
         for client in self.clients:
             if client != sender and client.is_connected:
-                client.send(buffer)
+                client.send_buffer(buffer)
 
     def listening(self) -> None:
+        __log__.info(f"{repr(self)} ready")
+
         while self._runing:
             socket_, (ip, port) = self.socket.accept()
             if not self._runing: break
@@ -73,7 +88,8 @@ class Server:
                 _t.start()
 
     def listen_client(self, client: Client) -> None:
-        print(f"Connection from {repr(client)}")
+        __log__.info(f"{repr(client)} Connected")
+        client.send_system_message(f"Connected to {repr(self)}")
 
         while self._runing and client.is_connected:
             try:
@@ -86,7 +102,7 @@ class Server:
                 client.disconnect()
                 break
 
-        print(f"Disconnected {repr(client)}")
+        __log__.info(f"{repr(client)} Disconnected")
 
     def add_client(self, ip: str, port: int, socket_: socket.socket) -> Optional[Client]:
         client = Client(ip=ip, port=port, socket_=socket_)
@@ -112,6 +128,9 @@ class Server:
 
 
 if __name__ == "__main__":
-    server = Server(port=10319)
-    print(repr(server))
-    server.run()
+    try:
+        port = int(input("port : "))
+        server = Server(port=port)
+        server.run()
+    except ValueError:
+        ...

@@ -1,26 +1,35 @@
+""" TODO :
+ - Add command decorators
+"""
+
 from __future__ import annotations
 
+import logging
 import socket
 from threading import Thread
 from typing import TYPE_CHECKING, Optional
 
+from utils.enums import BufferType
+import utils.logger
+
 if TYPE_CHECKING:
     from typing_extensions import Self
+    from server import Server
+
+__log__ = logging.getLogger(__name__)
 
 
 class Client:
     """Socket Client class"""
 
-    ip: str = ""
-    port: Optional[int] = None
     _thread: Optional[Thread] = None
     _connected: bool = False
 
     def __init__(
         self, 
-        ip: str, 
-        port: int, 
-        socket_: socket.socket
+        ip: Optional[str] = None,
+        port: Optional[int] = None,
+        socket_: Optional[socket.socket] = None
     ) -> None:
         self.ip = ip
         self.port = port
@@ -30,6 +39,12 @@ class Client:
     def __repr__(self) -> str:
         return f"<SocketClient-{self.ip}:{self.port}>"
 
+    def __eq__(self, other: object) -> bool:
+        return isinstance(other, Client) and self.socket == other.socket
+
+    def __ne__(self, other: object) -> bool:
+        return not self.__eq__(other)
+
     @property
     def is_connected(self) -> bool:
         return self._connected
@@ -38,15 +53,15 @@ class Client:
     def address(self) -> tuple[str, int]:
         return (self.ip, self.port)
 
-    def __eq__(self, other: object) -> bool:
-        if isinstance(other, Client):
-            return self.socket == other.socket
-        return False
-
-    def __ne__(self, other: object) -> bool:
-        if isinstance(other, Client):
-            return self.socket != other.socket
-        return True
+    def _decode(self, buffer: bytes) -> tuple[str, BufferType]:
+        message = buffer.decode('utf-8')
+        if message.startswith(repr(self)):
+            _type = BufferType.system
+            message = " ".join(message.split(f"{repr(self)}/")[1:])
+        else:
+            _type = BufferType.message
+        
+        return [message, _type]
 
     @classmethod
     def connect(cls, ip: str, port: int) -> Optional[Self]:
@@ -54,13 +69,16 @@ class Client:
 
         try:
             socket_.connect((ip, port))
+
+            ip_: str = socket.gethostbyname(socket.gethostname())
+            port_: int = socket_.getsockname()[1]
             
-            client = cls(ip, port, socket_)
+            client = cls(ip_, port_, socket_)
             client._thread = Thread(target=client.listen_server)
             client._thread.start()
             return client
         except Exception as exc:
-            print(exc)
+            __log__.exception(exc)
             return None
 
     def disconnect(self) -> None:
@@ -77,15 +95,31 @@ class Client:
                     self.disconnect()
                     break
                 
-                message = buffer.decode('utf-8')
-                print(message)
+                message, _type = self._decode(buffer)
+                if _type is BufferType.system:
+                    __log__.info(message)
+                else:
+                    print(message)
 
             except ConnectionResetError:
+                if self._connected:
+                    __log__.error("Connection was interrupted")
                 self.disconnect()
                 break
 
-    def send(self, buffer: bytes) -> None:
-        self.socket.sendall(buffer)
+        __log__.info("Disconnected")
+
+    def send_buffer(self, buffer: bytes) -> None:
+        if self.is_connected:
+            self.socket.sendall(buffer)
+
+    def send_message(self, _message: str) -> None:
+        if self.is_connected:
+            self.socket.sendall(_message.encode("utf-8"))
+
+    def send_system_message(self, _message: str) -> None:
+        if self.is_connected:
+            self.socket.sendall(f"{repr(self)}/{_message}".encode("utf-8"))
 
 
 if __name__ == "__main__":
